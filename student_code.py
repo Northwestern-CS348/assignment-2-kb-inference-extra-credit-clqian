@@ -116,6 +116,26 @@ class KnowledgeBase(object):
             print("Invalid ask:", fact.statement)
             return []
 
+    def _kb_remove_facts(self, fact_or_rule):
+        for f in fact_or_rule.supports_facts:
+            f_idx = self.facts.index(f)
+            kb_f = self.facts[f_idx]
+            for pair in kb_f.supported_by:
+                if fact_or_rule in pair:
+                    kb_f.supported_by.remove(pair)
+            if not kb_f.supported_by and not kb_f.asserted:
+                self.kb_retract(kb_f)
+
+    def _kb_remove_rules(self, fact_or_rule):
+        for r in fact_or_rule.supports_rules:
+            r_idx = self.rules.index(r)
+            kb_r = self.rules[r_idx]
+            for pair in kb_r.supported_by:
+                if fact_or_rule in pair:
+                    kb_r.supported_by.remove(pair)
+            if not kb_r.supported_by and not kb_r.asserted:
+                self.kb_retract(kb_r)
+
     def kb_retract(self, fact_or_rule):
         """Retract a fact from the KB
 
@@ -129,8 +149,25 @@ class KnowledgeBase(object):
         ####################################################
         # Implementation goes here
         # Not required for the extra credit assignment
+        if isinstance(fact_or_rule, Rule) and fact_or_rule in self.rules:
+            rule_idx = self.rules.index(fact_or_rule)
+            kb_rule = self.rules[rule_idx]
+            if kb_rule.asserted or kb_rule.supported_by:
+                return
+            self._kb_remove_facts(kb_rule)
+            self._kb_remove_rules(kb_rule)
+            self.rules.pop(rule_idx)
+        elif isinstance(fact_or_rule, Fact) and fact_or_rule in self.facts:
+            fact_idx = self.facts.index(fact_or_rule)
+            kb_fact = self.facts[fact_idx]
+            if kb_fact.supported_by:
+                kb_fact.asserted = False
+                return
+            self._kb_remove_facts(kb_fact)
+            self._kb_remove_rules(kb_fact)
+            self.facts.pop(fact_idx)
 
-    def kb_explain(self, fact_or_rule):
+    def kb_explain(self, fact_or_rule, indent = ''):
         """
         Explain where the fact or rule comes from
 
@@ -141,7 +178,42 @@ class KnowledgeBase(object):
             string explaining hierarchical support from other Facts and rules
         """
         ####################################################
-        # Student code goes here
+        if isinstance(fact_or_rule, Rule):
+            if fact_or_rule in self.rules:
+                rule_idx = self.rules.index(fact_or_rule)
+                kb_rule = self.rules[rule_idx]
+                res_str = indent + 'rule: ('
+                for sIdx in range(len(kb_rule.lhs) - 1):
+                    res_str += str(kb_rule.lhs[sIdx]) + ', '
+                res_str += str(kb_rule.lhs[-1]) + ') -> ' + str(kb_rule.rhs)
+                if kb_rule.asserted:
+                    res_str += ' ASSERTED'
+                res_str += '\n'
+                indent += '  '
+                for pair in kb_rule.supported_by:
+                    res_str += indent + 'SUPPORTED BY\n'
+                    res_str += self.kb_explain(pair[0], indent + '  ')
+                    res_str += self.kb_explain(pair[1], indent + '  ')
+            else:
+                return indent + "Rule is not in the KB\n"
+        elif isinstance(fact_or_rule, Fact):
+            if fact_or_rule in self.facts:
+                fact_idx = self.facts.index(fact_or_rule)
+                kb_fact = self.facts[fact_idx]
+                res_str = indent + 'fact: ' + str(kb_fact.statement)
+                if kb_fact.asserted:
+                    res_str += ' ASSERTED'
+                res_str += '\n'
+                indent += '  '
+                for pair in kb_fact.supported_by:
+                    res_str += indent + 'SUPPORTED BY\n'
+                    res_str += self.kb_explain(pair[0], indent + '  ')
+                    res_str += self.kb_explain(pair[1], indent + '  ')
+            else:
+                return indent + "Fact is not in the KB\n"
+        else:
+            return False
+        return res_str
 
 
 class InferenceEngine(object):
@@ -161,3 +233,23 @@ class InferenceEngine(object):
         ####################################################
         # Implementation goes here
         # Not required for the extra credit assignment
+        b = match(rule.lhs[0], fact.statement)
+        if b:
+            s_by = [(fact, rule)]
+            st = instantiate(rule.lhs[0], b)
+            new_rhs = instantiate(rule.rhs, b)
+            if len(rule.lhs) == 1 and st == fact.statement:  # create new fact with rule.rhs
+                new_f = Fact(new_rhs, s_by)
+                kb.kb_assert(new_f)
+                fact.supports_facts.append(new_f)
+                rule.supports_facts.append(new_f)
+            else:
+                new_lhs = []
+                if st != fact.statement:  # create new rule with new rule.lhs[0]
+                    new_lhs.append(st)
+                for old_lhs in rule.lhs[1:]:
+                    new_lhs.append(instantiate(old_lhs, b))
+                new_rule = Rule([new_lhs, new_rhs], s_by)
+                kb.kb_assert(new_rule)
+                fact.supports_rules.append(new_rule)
+                rule.supports_rules.append(new_rule)
